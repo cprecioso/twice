@@ -1,0 +1,8 @@
+[tools]
+node = "lts"
+
+[shell_alias]
+twice = "yarn run -TB twice"
+
+[settings]
+idiomatic_version_file_enable_tools = ["yarn"]
