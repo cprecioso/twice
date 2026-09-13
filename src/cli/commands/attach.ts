@@ -159,17 +159,13 @@ const makeRunSubtask =
     const hasher = crypto.createHash("sha256");
     const hashTap = new Transform({
       transform(chunk, _encoding, callback) {
-        try {
-          hasher.update(chunk);
-          callback(null, chunk);
-        } catch (err: any) {
-          callback(err);
-        }
+        hasher.update(chunk);
+        callback(null, chunk);
       },
     });
 
     await $({
-      input: input.compose(hashTap),
+      input: input.pipe(hashTap),
     })`git notes --ref ${resultNs} add -f --no-stripspace -F - ${ref}`;
 
     const hash = hasher.digest("hex");
