@@ -161,9 +161,13 @@ async function runSubtask(
 
   const resultNs = resultNoteNamespace(taskId, resultId);
 
-  const createBlobProc = $({ input })`git hash-object -w --stdin`;
+  const createBlobProc = $({
+    input,
+    stderr: "inherit",
+  })`git hash-object -w --stdin`;
 
   const blobHash = (await createBlobProc).stdout;
+  console.log({ blobHash });
 
   await $`git notes --ref ${resultNs} add -f -C ${blobHash} ${ref}`;
 
