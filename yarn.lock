@@ -61,7 +61,6 @@ __metadata:
     "@optique/core": "npm:^1.2.5"
     "@optique/discover": "npm:^1.2.5"
     "@optique/run": "npm:^1.2.5"
-    "@std/streams": "jsr:^1.1.2"
     "@types/node": "npm:^24.13.3"
     "@types/vinyl": "npm:^2.0.12"
     "@types/vinyl-fs": "npm:^3.0.8"
@@ -105,13 +104,6 @@ __metadata:
     wrap-ansi: "npm:^8.1.0"
     wrap-ansi-cjs: "npm:wrap-ansi@^7.0.0"
   checksum: 10c0/b1bf42535d49f11dc137f18d5e4e63a28c5569de438a221c369483731e9dac9fb797af554e8bf02b6192d1e5eba6e6402cf93900c3d0ac86391d00d04876789e
-  languageName: node
-  linkType: hard
-
-"@jsr/std__bytes@npm:^1.0.6":
-  version: 1.0.6
-  resolution: "@jsr/std__bytes@npm:1.0.6::__archiveUrl=https%3A%2F%2Fnpm.jsr.io%2F~%2F11%2F%40jsr%2Fstd__bytes%2F1.0.6.tgz"
-  checksum: 10c0/25b9b4e83e96c50460ce6d02b43045dcc3419b70e8a5aeccff892d4350d000a322b3bedaa2d71922967b9a30fd1869b41e2f8cf0092ff6f2cd4da8d2a4bb5dbf
   languageName: node
   linkType: hard
 
@@ -491,24 +483,6 @@ __metadata:
   version: 4.0.0
   resolution: "@sindresorhus/merge-streams@npm:4.0.0"
   checksum: 10c0/482ee543629aa1933b332f811a1ae805a213681ecdd98c042b1c1b89387df63e7812248bb4df3910b02b3cc5589d3d73e4393f30e197c9dde18046ccd471fc6b
-  languageName: node
-  linkType: hard
-
-"@std/streams@jsr:^1.1.2":
-  version: 1.1.2
-  resolution: "@std/streams@jsr:1.1.2::__archiveUrl=https%3A%2F%2Fnpm.jsr.io%2F~%2F11%2F%40jsr%2Fstd__streams%2F1.1.2.tgz"
-  dependencies:
-    "@jsr/std__bytes": "npm:^1.0.6"
-  checksum: 10c0/7894f272dae8817172f85a268d21d4b64be4f8d50c48b9d808114fc94ac99bb5d46698b794ec3e76a5cff5245f8d43fe05016892168ae59d2caadf7fb0edebbf
-  languageName: node
-  linkType: hard
-
-"@std/streams@npm:@jsr/std__streams@^1.1.2":
-  version: 1.1.2
-  resolution: "@jsr/std__streams@npm:1.1.2::__archiveUrl=https%3A%2F%2Fnpm.jsr.io%2F~%2F11%2F%40jsr%2Fstd__streams%2F1.1.2.tgz"
-  dependencies:
-    "@jsr/std__bytes": "npm:^1.0.6"
-  checksum: 10c0/7894f272dae8817172f85a268d21d4b64be4f8d50c48b9d808114fc94ac99bb5d46698b794ec3e76a5cff5245f8d43fe05016892168ae59d2caadf7fb0edebbf
   languageName: node
   linkType: hard
 

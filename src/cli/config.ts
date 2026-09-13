@@ -30,7 +30,7 @@ export const configSchema = z.compile(
                 "stderr",
                 "exitCode",
               ] satisfies UnionToTuple<RunnableResult>),
-              z.literal(true).optional(),
+              z.boolean().default(false),
             ),
           ),
       }),

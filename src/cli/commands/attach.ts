@@ -1,13 +1,10 @@
 import {
   formatMessage,
-  map,
   merge,
   message,
-  multiple,
   object,
   option,
   optionNames,
-  string,
   withDefault,
 } from "@optique/core";
 import { defineCommand } from "@optique/discover";
@@ -19,12 +16,17 @@ import { Readable, type PipelineSource } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type Vinyl from "vinyl";
 import * as vfs from "vinyl-fs";
-import { binaryName, loadConfig } from "../config";
+import { loadConfig } from "../config";
 import { CliError } from "../error";
 import { globalOptions } from "../global";
+import {
+  assertTasksDefined,
+  enabledTasksOption,
+  isTaskEnabled,
+  notesNamespace,
+} from "../lib/tasks";
 
 const ignoreDirtyOptionNames = ["--ignore-dirty"] as const;
-const enabledTasksOptionNames = ["-t", "--task"] as const;
 
 export default defineCommand({
   parser: merge(
@@ -36,15 +38,7 @@ export default defineCommand({
         }),
         false,
       ),
-      enabledTasks: map(
-        multiple(
-          option(...enabledTasksOptionNames, string({ metavar: "TASK_NAME" }), {
-            description: message`Run only the specified task(s). (can be specified multiple times)`,
-          }),
-        ),
-        (tasks) =>
-          tasks.length > 0 ? (new Set(tasks) as ReadonlySet<string>) : null,
-      ),
+      enabledTasks: enabledTasksOption,
     }),
   ),
   metadata: {
@@ -74,13 +68,7 @@ export default defineCommand({
     const config = await loadConfig(configFile);
     const ref = "HEAD";
 
-    if (enabledTasks) {
-      for (const taskId of enabledTasks) {
-        if (!(taskId in config.tasks)) {
-          throw new CliError(message`Task ${taskId} is not defined`);
-        }
-      }
-    }
+    assertTasksDefined(config, enabledTasks);
 
     await new Listr(
       Object.entries(config.tasks).map(
@@ -89,26 +77,24 @@ export default defineCommand({
             colors: process.stderr.isTTY,
             quotes: !process.stderr.isTTY,
           }),
-          enabled: !enabledTasks || enabledTasks.has(taskId),
+          enabled: isTaskEnabled(enabledTasks, taskId),
           rendererOptions: {
             persistentOutput: true,
           },
           task(_, task) {
-            const proc = $(taskDef.run, { shell: true, all: true });
+            const proc = $(taskDef.run, {
+              shell: true,
+              all: true,
+              reject: !taskDef.store.exitCode,
+            });
 
             function makeSubtask(
               id: string,
-              inputFn: undefined | (() => Promise<PipelineSource<any>>),
+              inputFn: false | undefined | (() => Promise<PipelineSource<any>>),
             ): ListrTask | undefined {
               if (!inputFn) return;
 
-              const namespace = [
-                binaryName,
-                "tasks",
-                taskId,
-                "results",
-                id,
-              ].join("/");
+              const namespace = notesNamespace(taskId, id);
 
               return {
                 title: `Storing ${id}`,
@@ -154,16 +140,22 @@ export default defineCommand({
                         vfs.src(taskDef.store.glob!, {
                           cwd: projectDir,
                           cwdbase: true,
+                          buffer: false,
                         }),
                       )
                         .compose(gulpTar("archive.tar"))
+                        .compose(
+                          assertOnlyOneElement(
+                            "Compressed file has already been processed.",
+                          ),
+                        )
                         .compose(async function* (
                           source: AsyncIterable<Vinyl>,
                         ) {
                           for await (const file of source) {
                             assert(
-                              file.contents,
-                              "File contents should not be null or undefined",
+                              file.contents !== null,
+                              "File contents should not be null.",
                             );
                             yield* file.contents;
                           }
@@ -178,3 +170,17 @@ export default defineCommand({
     ).run();
   },
 });
+
+// We can't do an early return in the async generator because it leaves the streams in an inconsistent state.
+// Instead, we'll assert at runtime that only one element is processed in the async generator.
+const assertOnlyOneElement = <T>(
+  error: string | Error = "Only one element should be processed.",
+) =>
+  async function* (source: AsyncIterable<T>) {
+    let done = false;
+    for await (const element of source) {
+      assert(!done, error);
+      yield element;
+      done = true;
+    }
+  };
