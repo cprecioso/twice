@@ -1,4 +1,4 @@
-// oxlint-disable no-await-in-loop no-shadow
+// oxlint-disable no-await-in-loop
 
 import {
   merge,
