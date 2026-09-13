@@ -1,6 +1,7 @@
 import {
   choice,
-  negatableFlag,
+  flag,
+  map,
   option,
   optional,
   or,
@@ -11,19 +12,15 @@ import { providerIds } from "./providers";
 
 export const provenanceOption = optional(
   or(
-    negatableFlag(
-      {
-        positive: "--provenance",
-        negative: "--no-provenance",
-      },
-      { description: message`Whether to enable provenance.` },
-    ),
     option("--provenance", choice(providerIds, { metavar: "PROVIDER" }), {
-      description: message`
-          The provenance provider to use.
-          By default, it's disabled locally, and enabled if a supported platform is detected.
-        `,
+      description: message`The provenance provider to use. By default, it's disabled locally, and enabled if a supported platform is detected.`,
     }),
+    map(
+      flag("--no-provenance", {
+        description: message`Always disable provenance.`,
+      }),
+      () => false,
+    ),
   ),
 );
 

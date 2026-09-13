@@ -26,9 +26,9 @@ export const configSchema = z.compile(
           .and(
             z.record(
               z.enum([
-                "stdout",
-                "stderr",
                 "exitCode",
+                "stderr",
+                "stdout",
               ] satisfies UnionToTuple<RunnableResult>),
               z.boolean().default(false),
             ),
@@ -43,11 +43,12 @@ export type Config = z.infer<typeof configSchema>;
 
 export const defineConfig = c12.createDefineConfig<ConfigInput>();
 
-export const loadConfig = async (configFile?: string) => {
+export const loadConfig = async (projectDir: string, configFile?: string) => {
   const { config } = await c12.loadConfig({
     name: binaryName,
     globalRc: false,
     configFile,
+    cwd: projectDir,
   });
 
   const result = configSchema.safeParse(config);

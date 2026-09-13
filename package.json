@@ -37,6 +37,7 @@
     "@cprecioso/async-iterable-helpers": "^0.4.1",
     "@optique/core": "^1.2.5",
     "@optique/discover": "^1.2.5",
+    "@optique/git": "^1.2.5",
     "@optique/run": "^1.2.5",
     "c12": "^4.0.0-rc.1",
     "execa": "^10.0.1",

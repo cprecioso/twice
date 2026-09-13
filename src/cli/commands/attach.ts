@@ -57,6 +57,7 @@ export default defineCommand({
     ignoreDirty,
     enabledTasks,
     provenance: provenanceArg,
+    ref,
   }) => {
     const $ = execa({ cwd: projectDir });
 
@@ -73,8 +74,7 @@ export default defineCommand({
       }
     }
 
-    const config = await loadConfig(configFilePath);
-    const ref = "HEAD";
+    const config = await loadConfig(projectDir, configFilePath);
 
     assertTasksDefined(config, enabledTasks);
 

@@ -28,6 +28,7 @@ try {
     completion: { command: { hidden: "usage" } },
 
     showDefault: true,
+    showChoices: true,
   });
 } catch (err) {
   const { cliMessage, exitCode } =

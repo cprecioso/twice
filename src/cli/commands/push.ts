@@ -1,16 +1,10 @@
 // oxlint-disable no-await-in-loop
-import {
-  merge,
-  message,
-  object,
-  option,
-  string,
-  withDefault,
-} from "@optique/core";
+import { merge, message, object, option, withDefault } from "@optique/core";
 import { defineCommand } from "@optique/discover";
+import { gitRemote } from "@optique/git";
 import { execa } from "execa";
 import { loadConfig } from "../config";
-import { globalOptions } from "../global";
+import { globalOptions, projectDirDependency } from "../global";
 import {
   assertTasksDefined,
   enabledTasksOption,
@@ -23,16 +17,25 @@ import {
 
 const remoteOptionNames = ["-r", "--remote"] as const;
 
+const remoteOptionValue = projectDirDependency.deriveAsync({
+  metavar: "REMOTE",
+  factory: (projectDir) => gitRemote({ dir: projectDir }),
+  defaultValue: () => "origin" as const,
+});
+
 export default defineCommand({
   parser: merge(
     globalOptions,
     object({
       remote: withDefault(
-        option(...remoteOptionNames, string({ metavar: "REMOTE" }), {
+        option(...remoteOptionNames, remoteOptionValue, {
           description: message`The remote to push the notes to.`,
         }),
         "origin",
       ),
+      disableProvenance: option("--no-provenance", {
+        description: message`Do not push provenance information.`,
+      }),
       enabledTasks: enabledTasksOption,
     }),
   ),
@@ -41,13 +44,14 @@ export default defineCommand({
   },
   handler: async ({
     projectDir,
+    configFilePath,
     remote,
+    disableProvenance,
     enabledTasks,
-    configFilePath: configFile,
+    ref,
   }) => {
     const $ = execa({ cwd: projectDir });
-    const config = await loadConfig(configFile);
-    const ref = "HEAD";
+    const config = await loadConfig(projectDir, configFilePath);
 
     assertTasksDefined(config, enabledTasks);
 
@@ -67,7 +71,9 @@ export default defineCommand({
 
         const [hasResult, hasProvenance] = await Promise.all([
           hasNote(resultNoteNamespace(taskId, resultId)),
-          hasNote(provenanceNoteNamespace(taskId, resultId)),
+          disableProvenance
+            ? Promise.resolve(false)
+            : hasNote(provenanceNoteNamespace(taskId, resultId)),
         ]);
 
         if (!hasResult) continue;
