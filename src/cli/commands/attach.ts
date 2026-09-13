@@ -16,6 +16,7 @@ import * as tar from "tar";
 import { loadConfig } from "../config";
 import { CliError } from "../error";
 import { globalOptions } from "../global";
+import { gitIdentityEnv } from "../lib/git-identity";
 import { provenanceOption } from "../lib/provenance";
 import type { GenerateProvenance, ProviderId } from "../lib/provenance/base";
 import {
@@ -77,6 +78,7 @@ export default defineCommand({
     assertTasksDefined(config, enabledTasks);
 
     const generateProvenance = await discoverProvenanceProvider(provenanceArg);
+    const gitEnv = await gitIdentityEnv(projectDir);
 
     for (const [taskId, taskDef] of Object.entries(config.tasks)) {
       if (!isTaskEnabled(enabledTasks, taskId)) continue;
@@ -93,6 +95,7 @@ export default defineCommand({
           cwd: projectDir,
           ref,
           generateProvenance,
+          gitEnv,
         });
 
       if (taskDef.store.stderr)
@@ -101,6 +104,7 @@ export default defineCommand({
           cwd: projectDir,
           ref,
           generateProvenance,
+          gitEnv,
         });
 
       if (taskDef.store.exitCode)
@@ -112,6 +116,7 @@ export default defineCommand({
             cwd: projectDir,
             ref,
             generateProvenance,
+            gitEnv,
           },
         );
 
@@ -128,6 +133,7 @@ export default defineCommand({
           cwd: projectDir,
           ref,
           generateProvenance,
+          gitEnv,
         });
       }
     }
@@ -142,14 +148,16 @@ async function runSubtask(
     generateProvenance,
     cwd,
     ref,
+    gitEnv,
   }: {
     taskId: string;
     generateProvenance: GenerateProvenance | null;
     cwd: string;
     ref: string;
+    gitEnv: Record<string, string>;
   },
 ) {
-  const $ = execa({ cwd });
+  const $ = execa({ cwd, env: gitEnv });
 
   const resultNs = resultNoteNamespace(taskId, resultId);
 
@@ -157,7 +165,7 @@ async function runSubtask(
 
   const blobHash = (await createBlobProc).stdout;
 
-  await $({ cwd })`git notes --ref ${resultNs} add -f -C ${blobHash} ${ref}`;
+  await $`git notes --ref ${resultNs} add -f -C ${blobHash} ${ref}`;
 
   if (generateProvenance) {
     const provenanceNs = provenanceNoteNamespace(taskId, resultId);
