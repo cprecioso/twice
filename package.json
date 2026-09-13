@@ -32,19 +32,22 @@
     "watch": "tsdown --watch"
   },
   "dependencies": {
+    "@actions/attest": "^3.2.0",
+    "@clack/prompts": "^1.7.0",
+    "@cprecioso/async-iterable-helpers": "^0.4.1",
     "@optique/core": "^1.2.5",
     "@optique/discover": "^1.2.5",
     "@optique/run": "^1.2.5",
     "c12": "^4.0.0-rc.1",
     "execa": "^10.0.1",
     "gulp-tar": "^5.0.0",
-    "listr2": "^11.1.0",
+    "std-env": "^4.2.0",
+    "type-fest": "^5.9.0",
     "vinyl-fs": "^4.0.2",
     "zod": "^4.6.2"
   },
   "devDependencies": {
     "@arethetypeswrong/core": "^0.18.5",
-    "@cprecioso/async-iterable-helpers": "^0.4.1",
     "@cprecioso/tsconfig": "^4.1.0",
     "@types/node": "^24.13.3",
     "@types/vinyl": "^2.0.12",
@@ -56,7 +59,6 @@
     "prettier-plugin-sh": "^0.19.0",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",
-    "type-fest": "^5.9.0",
     "typescript": "^7.0.2"
   },
   "sideEffects": false

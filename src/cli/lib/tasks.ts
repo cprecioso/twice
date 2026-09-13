@@ -32,9 +32,22 @@ export const isTaskEnabled = (
 ) => !enabledTasks || enabledTasks.has(taskId);
 
 /** The `git notes --ref` namespace for a task's stored result. */
-export const notesNamespace = (taskId: string, resultId: string) =>
+export const resultNoteNamespace = (taskId: string, resultId: string) =>
   [binaryName, "tasks", taskId, "results", resultId].join("/");
 
 /** The full ref name for a task's stored result. */
-export const notesRef = (taskId: string, resultId: string) =>
-  `refs/notes/${notesNamespace(taskId, resultId)}`;
+export const resultNoteRef = (taskId: string, resultId: string) =>
+  `refs/notes/${resultNoteNamespace(taskId, resultId)}`;
+
+/**
+ * The `git notes --ref` namespace for the provenance of a task's stored result.
+ *
+ * This is a sibling of {@link resultNoteNamespace} rather than a child of it,
+ * because git does not allow a ref to be nested under another existing ref.
+ */
+export const provenanceNoteNamespace = (taskId: string, resultId: string) =>
+  [binaryName, "tasks", taskId, "provenance", resultId].join("/");
+
+/** The full ref name for the provenance of a task's stored result. */
+export const provenanceNoteRef = (taskId: string, resultId: string) =>
+  `refs/notes/${provenanceNoteNamespace(taskId, resultId)}`;

@@ -1,5 +1,6 @@
+// oxlint-disable no-await-in-loop no-shadow
+
 import {
-  formatMessage,
   merge,
   message,
   object,
@@ -10,20 +11,25 @@ import {
 import { defineCommand } from "@optique/discover";
 import { execa } from "execa";
 import gulpTar from "gulp-tar";
-import { Listr, type ListrTask } from "listr2";
 import assert from "node:assert/strict";
-import { Readable, type PipelineSource } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 import type Vinyl from "vinyl";
 import * as vfs from "vinyl-fs";
 import { loadConfig } from "../config";
 import { CliError } from "../error";
 import { globalOptions } from "../global";
+import { provenanceOption } from "../lib/provenance";
+import type { GenerateProvenance, ProviderId } from "../lib/provenance/base";
+import {
+  getFirstEnabledProvider,
+  getGenerateProvenance,
+} from "../lib/provenance/providers";
 import {
   assertTasksDefined,
   enabledTasksOption,
   isTaskEnabled,
-  notesNamespace,
+  provenanceNoteNamespace,
+  resultNoteNamespace,
 } from "../lib/tasks";
 
 const ignoreDirtyOptionNames = ["--ignore-dirty"] as const;
@@ -39,6 +45,7 @@ export default defineCommand({
         false,
       ),
       enabledTasks: enabledTasksOption,
+      provenance: provenanceOption,
     }),
   ),
   metadata: {
@@ -46,9 +53,10 @@ export default defineCommand({
   },
   handler: async ({
     projectDir,
+    configFilePath,
     ignoreDirty,
     enabledTasks,
-    configFilePath: configFile,
+    provenance: provenanceArg,
   }) => {
     const $ = execa({ cwd: projectDir });
 
@@ -65,111 +73,123 @@ export default defineCommand({
       }
     }
 
-    const config = await loadConfig(configFile);
+    const config = await loadConfig(configFilePath);
     const ref = "HEAD";
 
     assertTasksDefined(config, enabledTasks);
 
-    await new Listr(
-      Object.entries(config.tasks).map(
-        ([taskId, taskDef]): ListrTask => ({
-          title: formatMessage(message`Running task ${taskId}`, {
-            colors: process.stderr.isTTY,
-            quotes: !process.stderr.isTTY,
-          }),
-          enabled: isTaskEnabled(enabledTasks, taskId),
-          rendererOptions: {
-            persistentOutput: true,
+    const provenance = await discoverProvenanceProvider(provenanceArg);
+
+    for (const [taskId, taskDef] of Object.entries(config.tasks)) {
+      if (!isTaskEnabled(enabledTasks, taskId)) continue;
+
+      const taskProc = $(taskDef.run, {
+        shell: true,
+        all: true,
+        reject: !taskDef.store.exitCode,
+      });
+
+      if (taskDef.store.stdout)
+        await runSubtask("stdout", taskProc.stdout, {
+          taskId,
+          cwd: projectDir,
+          ref,
+          generateProvenance: provenance,
+        });
+
+      if (taskDef.store.stderr)
+        await runSubtask("stderr", taskProc.stderr, {
+          taskId,
+          cwd: projectDir,
+          ref,
+          generateProvenance: provenance,
+        });
+
+      if (taskDef.store.exitCode)
+        await runSubtask(
+          "exitCode",
+          JSON.stringify((await taskProc).exitCode),
+          {
+            taskId,
+            cwd: projectDir,
+            ref,
+            generateProvenance: provenance,
           },
-          task(_, task) {
-            const proc = $(taskDef.run, {
-              shell: true,
-              all: true,
-              reject: !taskDef.store.exitCode,
-            });
+        );
 
-            function makeSubtask(
-              id: string,
-              inputFn: false | undefined | (() => Promise<PipelineSource<any>>),
-            ): ListrTask | undefined {
-              if (!inputFn) return;
-
-              const namespace = notesNamespace(taskId, id);
-
-              return {
-                title: `Storing ${id}`,
-                task: async (_ctx, subtask) =>
-                  pipeline(
-                    await inputFn(),
-                    $`git notes --ref ${namespace} add -f -F - ${ref}`.duplex(),
-                    subtask.stdout(),
-                  ),
-              };
-            }
-
-            return task.newListr(
-              [
-                {
-                  title: "Running task",
-                  rendererOptions: {
-                    outputBar: 4,
-                    persistentOutput: true,
-                  },
-                  task: () => proc.all,
-                },
-                makeSubtask(
-                  "stdout",
-                  taskDef.store.stdout && (async () => proc.stdout),
-                ),
-                makeSubtask(
-                  "stderr",
-                  taskDef.store.stderr && (async () => proc.stderr),
-                ),
-                makeSubtask(
-                  "exitCode",
-                  taskDef.store.exitCode &&
-                    (async () => [
-                      JSON.stringify((await proc).exitCode ?? null),
-                    ]),
-                ),
-                makeSubtask(
-                  "glob",
-                  taskDef.store.glob &&
-                    (async () =>
-                      Readable.from(
-                        vfs.src(taskDef.store.glob!, {
-                          cwd: projectDir,
-                          cwdbase: true,
-                          buffer: false,
-                        }),
-                      )
-                        .compose(gulpTar("archive.tar"))
-                        .compose(
-                          assertOnlyOneElement(
-                            "Compressed file has already been processed.",
-                          ),
-                        )
-                        .compose(async function* (
-                          source: AsyncIterable<Vinyl>,
-                        ) {
-                          for await (const file of source) {
-                            assert(
-                              file.contents !== null,
-                              "File contents should not be null.",
-                            );
-                            yield* file.contents;
-                          }
-                        })),
-                ),
-              ].filter(<T>(t: T | undefined): t is T => Boolean(t)),
-              { concurrent: true },
-            );
+      if (taskDef.store.glob)
+        await runSubtask(
+          "glob",
+          new Readable()
+            .wrap(
+              vfs.src(taskDef.store.glob!, {
+                cwd: projectDir,
+                cwdbase: true,
+                buffer: false,
+              }),
+            )
+            .compose(gulpTar("archive.tar"))
+            .compose(
+              assertOnlyOneElement(
+                "Compressed file has already been processed.",
+              ),
+            )
+            .compose(async function* (source: AsyncIterable<Vinyl>) {
+              for await (const file of source) {
+                assert(
+                  file.contents !== null,
+                  "File contents should not be null.",
+                );
+                yield* file.contents;
+              }
+            }),
+          {
+            taskId,
+            cwd: projectDir,
+            ref,
+            generateProvenance: provenance,
           },
-        }),
-      ),
-    ).run();
+        );
+    }
   },
 });
+
+async function runSubtask(
+  resultId: string,
+  input: Readable | string,
+  {
+    taskId,
+    generateProvenance,
+    cwd,
+    ref,
+  }: {
+    taskId: string;
+    generateProvenance: GenerateProvenance | null;
+    cwd: string;
+    ref: string;
+  },
+) {
+  const $ = execa({ cwd });
+
+  const resultNs = resultNoteNamespace(taskId, resultId);
+
+  const createBlobProc = $({ input })`git hash-object -w --stdin`;
+
+  const blobHash = (await createBlobProc).stdout;
+
+  await $({ cwd })`git notes --ref ${resultNs} add -f -C ${blobHash} ${ref}`;
+
+  if (generateProvenance) {
+    const provenanceNs = provenanceNoteNamespace(taskId, resultId);
+    const provenanceData = await generateProvenance({
+      name: resultNs,
+      sha256: blobHash,
+    });
+    await $({
+      input: provenanceData,
+    })`git notes --ref ${provenanceNs} add -f --no-stripspace -F - ${ref}`;
+  }
+}
 
 // We can't do an early return in the async generator because it leaves the streams in an inconsistent state.
 // Instead, we'll assert at runtime that only one element is processed in the async generator.
@@ -184,3 +204,19 @@ const assertOnlyOneElement = <T>(
       done = true;
     }
   };
+
+const discoverProvenanceProvider = async (
+  arg: undefined | boolean | ProviderId,
+) => {
+  if (arg === false) return null;
+
+  const providerId =
+    typeof arg === "string" ? arg : (await getFirstEnabledProvider())?.id;
+
+  if (!providerId) {
+    if (arg === true) throw new CliError(message`No provider found`);
+    else return null;
+  }
+
+  return await getGenerateProvenance(providerId);
+};

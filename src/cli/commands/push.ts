@@ -1,5 +1,5 @@
+// oxlint-disable no-await-in-loop
 import {
-  formatMessage,
   merge,
   message,
   object,
@@ -7,28 +7,21 @@ import {
   string,
   withDefault,
 } from "@optique/core";
-import { lineBreak, text, type Message } from "@optique/core/message";
 import { defineCommand } from "@optique/discover";
 import { execa } from "execa";
-import { Listr, type ListrTask } from "listr2";
 import { loadConfig } from "../config";
-import { CliError } from "../error";
 import { globalOptions } from "../global";
 import {
   assertTasksDefined,
   enabledTasksOption,
   isTaskEnabled,
-  notesNamespace,
-  notesRef,
+  provenanceNoteNamespace,
+  provenanceNoteRef,
+  resultNoteNamespace,
+  resultNoteRef,
 } from "../lib/tasks";
 
 const remoteOptionNames = ["-r", "--remote"] as const;
-
-const fmt = (msg: Message) =>
-  formatMessage(msg, {
-    colors: process.stderr.isTTY,
-    quotes: !process.stderr.isTTY,
-  });
 
 export default defineCommand({
   parser: merge(
@@ -60,66 +53,35 @@ export default defineCommand({
 
     const refs: string[] = [];
 
-    await new Listr([
-      {
-        title: fmt(message`Looking for results attached to ${ref}`),
-        task: (_, task) =>
-          task.newListr(
-            Object.entries(config.tasks).map(
-              ([taskId, taskDef]): ListrTask => ({
-                title: fmt(message`Task ${taskId}`),
-                enabled: isTaskEnabled(enabledTasks, taskId),
-                task: (_ctx, subtask) =>
-                  subtask.newListr(
-                    Object.entries(taskDef.store)
-                      .filter(([, value]) => Boolean(value))
-                      .map(
-                        ([resultId]): ListrTask => ({
-                          title: `Checking ${resultId}`,
-                          task: async (_leafCtx, leaf) => {
-                            const hasNote = await $({
-                              reject: false,
-                            })`git notes --ref ${notesNamespace(taskId, resultId)} list ${ref}`.then(
-                              ({ exitCode }) => exitCode === 0,
-                            );
-                            if (hasNote) {
-                              refs.push(notesRef(taskId, resultId));
-                              leaf.title = `Found ${resultId}`;
-                            } else {
-                              leaf.skip(`No ${resultId} attached`);
-                            }
-                          },
-                        }),
-                      ),
-                    { concurrent: true },
-                  ),
-              }),
-            ),
-            { concurrent: true },
-          ),
-      },
-      {
-        title: fmt(message`Pushing to ${remote}`),
-        rendererOptions: { persistentOutput: true },
-        task: async (_, task) => {
-          if (refs.length === 0) {
-            task.skip(fmt(message`No results attached to ${ref}`));
-            return;
-          }
-          refs.sort();
-          const refspecs = refs.map((r) => `${r}:${r}`);
-          const result = await $({
-            reject: false,
-            all: true,
-          })`git push ${remote} ${refspecs}`;
-          if (result.exitCode !== 0) {
-            throw new CliError(
-              message`Failed to push notes to ${remote}:${lineBreak()}${text(result.all ?? "")}`,
-            );
-          }
-          task.output = result.all ?? "";
-        },
-      },
-    ]).run();
+    for (const [taskId, taskDef] of Object.entries(config.tasks)) {
+      if (!isTaskEnabled(enabledTasks, taskId)) continue;
+
+      for (const [resultId, value] of Object.entries(taskDef.store)) {
+        if (!value) continue;
+
+        const hasNote = (namespace: string) =>
+          $`git notes --ref ${namespace} list ${ref}`.then(
+            () => true,
+            () => false,
+          );
+
+        const [hasResult, hasProvenance] = await Promise.all([
+          hasNote(resultNoteNamespace(taskId, resultId)),
+          hasNote(provenanceNoteNamespace(taskId, resultId)),
+        ]);
+
+        if (!hasResult) continue;
+
+        refs.push(resultNoteRef(taskId, resultId));
+        if (hasProvenance) {
+          refs.push(provenanceNoteRef(taskId, resultId));
+        }
+      }
+    }
+
+    if (refs.length === 0) return;
+
+    const refspecs = refs.toSorted().map((r) => `${r}:${r}`);
+    await $`git push ${remote} ${refspecs}`;
   },
 });
