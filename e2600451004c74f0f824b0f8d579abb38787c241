@@ -1,0 +1,25 @@
+ℹ tsdown v0.23.0 powered by rolldown v1.2.7
+ℹ config file: /Users/carlos/Developer/Personal/try/2026-09-11-twice/tsdown.config.ts 
+ℹ entry: src/bin.entry.ts, src/config.entry.ts
+ℹ target: node24
+ℹ tsconfig: tsconfig.json
+ℹ Build start
+ℹ Cleaning 12 files
+ℹ Emit types with typescript@7.0.2
+ℹ Granting execute permission to dist/bin.mjs
+ℹ dist/bin.mjs                  12.15 kB │ gzip: 3.97 kB
+ℹ dist/config.mjs                0.08 kB │ gzip: 0.08 kB
+ℹ dist/bin.mjs.map              24.06 kB │ gzip: 7.03 kB
+ℹ dist/config-BZxDKFEx.mjs.map   4.04 kB │ gzip: 1.50 kB
+ℹ dist/github-CvCPJboY.mjs.map   1.89 kB │ gzip: 0.90 kB
+ℹ dist/config-BZxDKFEx.mjs       1.84 kB │ gzip: 0.92 kB
+ℹ dist/github-CvCPJboY.mjs       1.15 kB │ gzip: 0.59 kB
+ℹ dist/error-CBVDOF4e.mjs.map    0.89 kB │ gzip: 0.49 kB
+ℹ dist/error-CBVDOF4e.mjs        0.50 kB │ gzip: 0.31 kB
+ℹ dist/config.d.mts.map          0.37 kB │ gzip: 0.23 kB
+ℹ dist/config.d.mts              1.59 kB │ gzip: 0.58 kB
+ℹ dist/bin.d.mts                 0.01 kB │ gzip: 0.03 kB
+ℹ 12 files, total: 48.56 kB
+✔ Build complete in 174ms
+✔ [attw] No problems found (77ms)
+✔ [publint] No issues found (81ms)
