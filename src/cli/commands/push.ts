@@ -50,7 +50,7 @@ export default defineCommand({
     enabledTasks,
     ref,
   }) => {
-    const $ = execa({ cwd: projectDir });
+    const $ = execa({ cwd: projectDir, stdout: "pipe", stdin: "inherit" });
     const config = await loadConfig(projectDir, configFilePath);
 
     assertTasksDefined(config, enabledTasks);

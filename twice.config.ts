@@ -4,11 +4,20 @@ export default defineConfig({
   tasks: {
     build: {
       run: "yarn run build",
-      store: { glob: "dist/**" },
+      store: {
+        files: { glob: "dist/**" },
+        stdout: true,
+        stderr: true,
+        exitCode: true,
+      },
     },
     lint: {
       run: "yarn run lint",
-      store: { exitCode: true },
+      store: {
+        stdout: true,
+        stderr: true,
+        exitCode: true,
+      },
     },
   },
 });

@@ -10,8 +10,9 @@ import {
 } from "@optique/core";
 import { defineCommand } from "@optique/discover";
 import { execa } from "execa";
+import * as crypto from "node:crypto";
 import { glob } from "node:fs/promises";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import * as tar from "tar";
 import { loadConfig } from "../config";
 import { CliError } from "../error";
@@ -58,7 +59,7 @@ export default defineCommand({
     provenance: provenanceArg,
     ref,
   }) => {
-    const $ = execa({ cwd: projectDir });
+    const $ = execa({ cwd: projectDir, stdout: "pipe", stdin: "inherit" });
 
     if (!ignoreDirty) {
       const isDirty = await $`git diff --quiet`.then(
@@ -89,61 +90,55 @@ export default defineCommand({
         reject: !taskDef.store.exitCode,
       });
 
+      const runSubtask = makeRunSubtask({
+        taskId,
+        generateProvenance,
+        cwd: projectDir,
+        ref,
+        gitEnv,
+      });
+
+      const storePromises: Promise<void>[] = [];
+
       if (taskDef.store.stdout)
-        await runSubtask("stdout", taskProc.stdout, {
-          taskId,
-          cwd: projectDir,
-          ref,
-          generateProvenance,
-          gitEnv,
-        });
+        storePromises.push(runSubtask("stdout", taskProc.stdout));
 
       if (taskDef.store.stderr)
-        await runSubtask("stderr", taskProc.stderr, {
-          taskId,
-          cwd: projectDir,
-          ref,
-          generateProvenance,
-          gitEnv,
-        });
+        storePromises.push(runSubtask("stderr", taskProc.stderr));
 
       if (taskDef.store.exitCode)
-        await runSubtask(
-          "exitCode",
-          JSON.stringify((await taskProc).exitCode),
-          {
-            taskId,
-            cwd: projectDir,
-            ref,
-            generateProvenance,
-            gitEnv,
-          },
+        storePromises.push(
+          runSubtask(
+            "exitCode",
+            Readable.from(
+              (async function* () {
+                yield JSON.stringify((await taskProc).exitCode);
+              })(),
+            ),
+          ),
         );
 
-      if (taskDef.store.glob) {
+      await Promise.all(storePromises);
+
+      if (taskDef.store.files) {
         const files = await Array.fromAsync(
-          glob(taskDef.store.glob, { cwd: projectDir }),
+          glob(taskDef.store.files.glob, { cwd: projectDir }),
         );
         const tarStream = Readable.from(
-          tar.create({ C: projectDir, cwd: projectDir }, files),
+          tar.create(
+            { cwd: projectDir, gzip: taskDef.store.files.compress },
+            files,
+          ),
         );
 
-        await runSubtask("glob", tarStream, {
-          taskId,
-          cwd: projectDir,
-          ref,
-          generateProvenance,
-          gitEnv,
-        });
+        await runSubtask("glob", tarStream);
       }
     }
   },
 });
 
-async function runSubtask(
-  resultId: string,
-  input: Readable | string,
-  {
+const makeRunSubtask =
+  ({
     taskId,
     generateProvenance,
     cwd,
@@ -155,33 +150,41 @@ async function runSubtask(
     cwd: string;
     ref: string;
     gitEnv: Record<string, string>;
-  },
-) {
-  const $ = execa({ cwd, env: gitEnv });
+  }) =>
+  async (resultId: string, input: Readable) => {
+    const $ = execa({ cwd, env: gitEnv, stdout: "pipe", stdin: "inherit" });
 
-  const resultNs = resultNoteNamespace(taskId, resultId);
+    const resultNs = resultNoteNamespace(taskId, resultId);
 
-  const createBlobProc = $({
-    input,
-    stderr: "inherit",
-  })`git hash-object -w --stdin`;
-
-  const blobHash = (await createBlobProc).stdout;
-  console.log({ blobHash });
-
-  await $`git notes --ref ${resultNs} add -f -C ${blobHash} ${ref}`;
-
-  if (generateProvenance) {
-    const provenanceNs = provenanceNoteNamespace(taskId, resultId);
-    const provenanceData = await generateProvenance({
-      name: resultNs,
-      sha256: blobHash,
+    const hasher = crypto.createHash("sha256");
+    const hashTap = new Transform({
+      transform(chunk, _encoding, callback) {
+        try {
+          hasher.update(chunk);
+          callback(null, chunk);
+        } catch (err: any) {
+          callback(err);
+        }
+      },
     });
+
     await $({
-      input: provenanceData,
-    })`git notes --ref ${provenanceNs} add -f --no-stripspace -F - ${ref}`;
-  }
-}
+      input: input.compose(hashTap),
+    })`git notes --ref ${resultNs} add -f --no-stripspace -F - ${ref}`;
+
+    const hash = hasher.digest("hex");
+
+    if (generateProvenance) {
+      const provenanceNs = provenanceNoteNamespace(taskId, resultId);
+      const provenanceData = await generateProvenance({
+        name: resultNs,
+        sha256: hash,
+      });
+      await $({
+        input: provenanceData,
+      })`git notes --ref ${provenanceNs} add -f --no-stripspace -F - ${ref}`;
+    }
+  };
 
 const discoverProvenanceProvider = async (
   arg: undefined | boolean | ProviderId,

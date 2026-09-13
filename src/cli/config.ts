@@ -22,7 +22,14 @@ export const configSchema = z.compile(
       z.object({
         run: runnableSchema,
         store: z
-          .object({ glob: globSchema.optional() })
+          .object({
+            files: z
+              .object({
+                glob: globSchema,
+                compress: z.boolean().default(true),
+              })
+              .optional(),
+          })
           .and(
             z.record(
               z.enum([
