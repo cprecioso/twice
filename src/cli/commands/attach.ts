@@ -10,11 +10,9 @@ import {
 } from "@optique/core";
 import { defineCommand } from "@optique/discover";
 import { execa } from "execa";
-import gulpTar from "gulp-tar";
-import assert from "node:assert/strict";
+import { glob } from "node:fs/promises";
 import { Readable } from "node:stream";
-import type Vinyl from "vinyl";
-import * as vfs from "vinyl-fs";
+import * as tar from "tar";
 import { loadConfig } from "../config";
 import { CliError } from "../error";
 import { globalOptions } from "../global";
@@ -78,7 +76,7 @@ export default defineCommand({
 
     assertTasksDefined(config, enabledTasks);
 
-    const provenance = await discoverProvenanceProvider(provenanceArg);
+    const generateProvenance = await discoverProvenanceProvider(provenanceArg);
 
     for (const [taskId, taskDef] of Object.entries(config.tasks)) {
       if (!isTaskEnabled(enabledTasks, taskId)) continue;
@@ -94,7 +92,7 @@ export default defineCommand({
           taskId,
           cwd: projectDir,
           ref,
-          generateProvenance: provenance,
+          generateProvenance,
         });
 
       if (taskDef.store.stderr)
@@ -102,7 +100,7 @@ export default defineCommand({
           taskId,
           cwd: projectDir,
           ref,
-          generateProvenance: provenance,
+          generateProvenance,
         });
 
       if (taskDef.store.exitCode)
@@ -113,43 +111,25 @@ export default defineCommand({
             taskId,
             cwd: projectDir,
             ref,
-            generateProvenance: provenance,
+            generateProvenance,
           },
         );
 
-      if (taskDef.store.glob)
-        await runSubtask(
-          "glob",
-          new Readable()
-            .wrap(
-              vfs.src(taskDef.store.glob!, {
-                cwd: projectDir,
-                cwdbase: true,
-                buffer: false,
-              }),
-            )
-            .compose(gulpTar("archive.tar"))
-            .compose(
-              assertOnlyOneElement(
-                "Compressed file has already been processed.",
-              ),
-            )
-            .compose(async function* (source: AsyncIterable<Vinyl>) {
-              for await (const file of source) {
-                assert(
-                  file.contents !== null,
-                  "File contents should not be null.",
-                );
-                yield* file.contents;
-              }
-            }),
-          {
-            taskId,
-            cwd: projectDir,
-            ref,
-            generateProvenance: provenance,
-          },
+      if (taskDef.store.glob) {
+        const files = await Array.fromAsync(
+          glob(taskDef.store.glob, { cwd: projectDir }),
         );
+        const tarStream = Readable.from(
+          tar.create({ C: projectDir, cwd: projectDir }, files),
+        );
+
+        await runSubtask("glob", tarStream, {
+          taskId,
+          cwd: projectDir,
+          ref,
+          generateProvenance,
+        });
+      }
     }
   },
 });
@@ -190,20 +170,6 @@ async function runSubtask(
     })`git notes --ref ${provenanceNs} add -f --no-stripspace -F - ${ref}`;
   }
 }
-
-// We can't do an early return in the async generator because it leaves the streams in an inconsistent state.
-// Instead, we'll assert at runtime that only one element is processed in the async generator.
-const assertOnlyOneElement = <T>(
-  error: string | Error = "Only one element should be processed.",
-) =>
-  async function* (source: AsyncIterable<T>) {
-    let done = false;
-    for await (const element of source) {
-      assert(!done, error);
-      yield element;
-      done = true;
-    }
-  };
 
 const discoverProvenanceProvider = async (
   arg: undefined | boolean | ProviderId,
