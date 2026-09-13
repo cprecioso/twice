@@ -24,4 +24,9 @@ jobs:
       - run: yarn run build
 
       - run: yarn twice attach
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
       - run: yarn twice push
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
