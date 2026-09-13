@@ -20,6 +20,6 @@
 ℹ dist/config.d.mts              1.59 kB │ gzip: 0.58 kB
 ℹ dist/bin.d.mts                 0.01 kB │ gzip: 0.03 kB
 ℹ 12 files, total: 49.28 kB
-✔ Build complete in 175ms
-✔ [attw] No problems found (77ms)
-✔ [publint] No issues found (81ms)
+✔ Build complete in 197ms
+✔ [attw] No problems found (78ms)
+✔ [publint] No issues found (82ms)
