@@ -6,31 +6,42 @@ import {
   object,
   option,
   optionNames,
+  text,
+  values,
   withDefault,
 } from "@optique/core";
 import { defineCommand } from "@optique/discover";
 import { execa } from "execa";
-import * as crypto from "node:crypto";
-import { glob } from "node:fs/promises";
-import { Readable, Transform } from "node:stream";
-import * as tar from "tar";
-import { loadConfig } from "../config";
+import * as path from "node:path";
+import type { Readable } from "node:stream";
+import { loadConfig, type Glob } from "../config";
 import { CliError } from "../error";
 import { globalOptions } from "../global";
+import { sha256Bytes, sha256File, sha256Tap } from "../lib/digest";
+import { collectFiles } from "../lib/files";
+import { printMessage } from "../lib/format";
+import { createGit, type Git, type Oid, type TreeEntry } from "../lib/git";
 import { gitIdentityEnv } from "../lib/git-identity";
 import { provenanceOption } from "../lib/provenance";
-import type { GenerateProvenance, ProviderId } from "../lib/provenance/base";
+import type {
+  GenerateProvenance,
+  ProviderId,
+  Subject,
+} from "../lib/provenance/base";
 import {
   getFirstEnabledProvider,
   getGenerateProvenance,
 } from "../lib/provenance/providers";
+import { detectRef, refOption } from "../lib/ref";
 import {
-  assertTasksDefined,
-  enabledTasksOption,
-  isTaskEnabled,
-  provenanceNoteNamespace,
-  resultNoteNamespace,
-} from "../lib/tasks";
+  assertValidRefName,
+  commitResults,
+  provenanceFileName,
+  readResultsTip,
+  resultPath,
+  twiceRef,
+  writeResultsTree,
+} from "../lib/store";
 
 const ignoreDirtyOptionNames = ["--ignore-dirty"] as const;
 
@@ -44,20 +55,19 @@ export default defineCommand({
         }),
         false,
       ),
-      enabledTasks: enabledTasksOption,
       provenance: provenanceOption,
+      ref: refOption,
     }),
   ),
   metadata: {
-    description: message`Run the configured commands and attach the result to the HEAD commit.`,
+    description: message`Run the configured tasks and store their results for the current ref.`,
   },
   handler: async ({
     projectDir,
     configFilePath,
     ignoreDirty,
-    enabledTasks,
     provenance: provenanceArg,
-    ref,
+    ref: refArg,
   }) => {
     const $ = execa({ cwd: projectDir, stdout: "pipe", stdin: "inherit" });
 
@@ -76,111 +86,157 @@ export default defineCommand({
 
     const config = await loadConfig(projectDir, configFilePath);
 
-    assertTasksDefined(config, enabledTasks);
+    const git = createGit({
+      cwd: projectDir,
+      env: await gitIdentityEnv(projectDir),
+    });
+
+    const refName = refArg ?? (await detectRef(git));
+    await assertValidRefName(git, refName);
+
+    const sourceCommit = await git.revParse("HEAD^{commit}");
+    if (sourceCommit === null) {
+      throw new CliError(message`HEAD does not point to a commit.`);
+    }
 
     const generateProvenance = await discoverProvenanceProvider(provenanceArg);
-    const gitEnv = await gitIdentityEnv(projectDir);
+
+    const taskTrees = new Map<string, Oid | null>();
 
     for (const [taskId, taskDef] of Object.entries(config.tasks)) {
-      if (!isTaskEnabled(enabledTasks, taskId)) continue;
+      const store = makeResultStore({ git, taskId, generateProvenance });
 
-      const taskProc = $(taskDef.run, {
-        shell: true,
-        all: true,
-        reject: !taskDef.store.exitCode,
-      });
-
-      const runSubtask = makeRunSubtask({
-        taskId,
-        generateProvenance,
-        cwd: projectDir,
-        ref,
-        gitEnv,
-      });
+      const taskProc = $(taskDef.run, { shell: true, reject: false });
 
       const storePromises: Promise<void>[] = [];
 
       if (taskDef.store.stdout)
-        storePromises.push(runSubtask("stdout", taskProc.stdout));
+        storePromises.push(store.stream("stdout", taskProc.stdout));
 
       if (taskDef.store.stderr)
-        storePromises.push(runSubtask("stderr", taskProc.stderr));
+        storePromises.push(store.stream("stderr", taskProc.stderr));
+
+      const [result] = await Promise.all([taskProc, ...storePromises]);
+
+      if (result.exitCode === undefined) {
+        throw new CliError(message`Task ${taskId} did not exit normally.`, {
+          cause: result,
+        });
+      }
+
+      if (!taskDef.store.exitCode && result.exitCode !== 0) {
+        throw new CliError(
+          message`Task ${taskId} failed with exit code ${text(String(result.exitCode))}.`,
+          { cause: result },
+        );
+      }
 
       if (taskDef.store.exitCode)
-        storePromises.push(
-          runSubtask(
-            "exitCode",
-            Readable.from(
-              (async function* () {
-                yield JSON.stringify((await taskProc).exitCode);
-              })(),
-            ),
-          ),
+        await store.bytes(
+          "exitCode",
+          new TextEncoder().encode(JSON.stringify(result.exitCode)),
         );
 
-      await Promise.all(storePromises);
+      if (taskDef.store.files)
+        await store.files("files", taskDef.store.files.glob, projectDir);
 
-      if (taskDef.store.files) {
-        const files = await Array.fromAsync(
-          glob(taskDef.store.files.glob, { cwd: projectDir }),
-        );
-        const tarStream = Readable.from(
-          tar.create(
-            { cwd: projectDir, gzip: taskDef.store.files.compress },
-            files,
-          ),
-        );
-
-        await runSubtask("glob", tarStream);
-      }
+      taskTrees.set(taskId, await store.writeTree());
     }
+
+    const parent = await readResultsTip(git, refName);
+    const tree = await writeResultsTree(git, taskTrees);
+    const commit = await commitResults(git, {
+      refName,
+      sourceCommit,
+      tree,
+      parent,
+    });
+
+    printMessage(
+      message`Stored the results for ${refName} in ${twiceRef(refName)} (${commit}).`,
+    );
   },
 });
 
-const makeRunSubtask =
-  ({
-    taskId,
-    generateProvenance,
-    cwd,
-    ref,
-    gitEnv,
-  }: {
-    taskId: string;
-    generateProvenance: GenerateProvenance | null;
-    cwd: string;
-    ref: string;
-    gitEnv: Record<string, string>;
-  }) =>
-  async (resultId: string, input: Readable) => {
-    const $ = execa({ cwd, env: gitEnv, stdout: "pipe", stdin: "inherit" });
+/**
+ * Collects a task's results as tree entries, relative to the task's
+ * directory in the results tree, generating provenance for each of them.
+ */
+const makeResultStore = ({
+  git,
+  taskId,
+  generateProvenance,
+}: {
+  git: Git;
+  taskId: string;
+  generateProvenance: GenerateProvenance | null;
+}) => {
+  const entries: TreeEntry[] = [];
 
-    const resultNs = resultNoteNamespace(taskId, resultId);
-
-    const hasher = crypto.createHash("sha256");
-    const hashTap = new Transform({
-      transform(chunk, _encoding, callback) {
-        hasher.update(chunk);
-        callback(null, chunk);
-      },
-    });
-
-    await $({
-      input: input.pipe(hashTap),
-    })`git notes --ref ${resultNs} add -f --no-stripspace -F - ${ref}`;
-
-    const hash = hasher.digest("hex");
-
-    if (generateProvenance) {
-      const provenanceNs = provenanceNoteNamespace(taskId, resultId);
-      const provenanceData = await generateProvenance({
-        name: resultNs,
-        sha256: hash,
-      });
-      await $({
-        input: provenanceData,
-      })`git notes --ref ${provenanceNs} add -f --no-stripspace -F - ${ref}`;
-    }
+  const addBlob = (entryPath: string, oid: Oid, mode = "100644") => {
+    entries.push({ mode, type: "blob", oid, path: entryPath });
   };
+
+  const addProvenance = async (resultId: string, subjects: Subject[]) => {
+    if (generateProvenance === null || subjects.length === 0) return;
+    const provenance = await generateProvenance(subjects);
+    addBlob(provenanceFileName(resultId), await git.hashObject(provenance));
+  };
+
+  return {
+    /** Stores a result as a file with the content of a stream. */
+    stream: async (resultId: string, input: Readable) => {
+      const { stream, digest } = sha256Tap(input);
+      addBlob(resultId, await git.hashObject(stream));
+      await addProvenance(resultId, [
+        { name: resultPath(taskId, resultId), sha256: digest() },
+      ]);
+    },
+
+    /** Stores a result as a file with the given content. */
+    bytes: async (resultId: string, data: Uint8Array) => {
+      addBlob(resultId, await git.hashObject(data));
+      await addProvenance(resultId, [
+        { name: resultPath(taskId, resultId), sha256: sha256Bytes(data) },
+      ]);
+    },
+
+    /**
+     * Stores a result as a directory with the files matched by `globs` at
+     * their original paths. Their provenance covers every file.
+     */
+    files: async (resultId: string, globs: Glob, cwd: string) => {
+      const files = await collectFiles(cwd, globs);
+
+      if (files.length === 0) {
+        printMessage(
+          message`Task ${taskId}: no files matched ${values(globs)}; nothing stored.`,
+        );
+        return;
+      }
+
+      const oids = await git.hashObjectPaths(files.map((file) => file.path));
+      const subjects: Subject[] = [];
+
+      for (const [i, file] of files.entries()) {
+        addBlob(`${resultId}/${file.path}`, oids[i]!, file.mode);
+
+        if (generateProvenance) {
+          subjects.push({
+            name: `${resultPath(taskId, resultId)}/${file.path}`,
+            sha256: await sha256File(path.join(cwd, file.path)),
+          });
+        }
+      }
+
+      await addProvenance(resultId, subjects);
+    },
+
+    /** Writes the task's results tree, or `null` if nothing was stored. */
+    writeTree: async () =>
+      entries.length === 0 ? null : await git.writeTree(entries),
+  };
+};
 
 const discoverProvenanceProvider = async (
   arg: undefined | boolean | ProviderId,

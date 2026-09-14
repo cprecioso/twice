@@ -17,7 +17,7 @@ export const enableSchema = z.function({
 
 export type GenerateProvenance = z.infer<typeof generateProvenanceSchema>;
 export const generateProvenanceSchema = z.function({
-  input: z.tuple([subjectSchema]),
+  input: z.tuple([z.array(subjectSchema).min(1)]),
   output: z.promise(z.instanceof(Uint8Array)),
 });
 

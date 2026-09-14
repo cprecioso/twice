@@ -149,7 +149,6 @@ __metadata:
     prettier-plugin-sh: "npm:^0.19.0"
     publint: "npm:^0.3.24"
     std-env: "npm:^4.2.0"
-    tar: "npm:^7.5.22"
     tsdown: "npm:^0.23.0"
     type-fest: "npm:^5.9.0"
     typescript: "npm:^7.0.2"
@@ -2775,7 +2774,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"tar@npm:^7.4.3, tar@npm:^7.5.22":
+"tar@npm:^7.4.3":
   version: 7.5.22
   resolution: "tar@npm:7.5.22"
   dependencies:
