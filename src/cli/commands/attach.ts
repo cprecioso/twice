@@ -42,11 +42,6 @@ import {
   twiceRef,
   writeResultsTree,
 } from "../lib/store";
-import {
-  assertTasksDefined,
-  enabledTasksOption,
-  isTaskEnabled,
-} from "../lib/tasks";
 
 const ignoreDirtyOptionNames = ["--ignore-dirty"] as const;
 
@@ -60,7 +55,6 @@ export default defineCommand({
         }),
         false,
       ),
-      enabledTasks: enabledTasksOption,
       provenance: provenanceOption,
       ref: refOption,
     }),
@@ -72,7 +66,6 @@ export default defineCommand({
     projectDir,
     configFilePath,
     ignoreDirty,
-    enabledTasks,
     provenance: provenanceArg,
     ref: refArg,
   }) => {
@@ -93,8 +86,6 @@ export default defineCommand({
 
     const config = await loadConfig(projectDir, configFilePath);
 
-    assertTasksDefined(config, enabledTasks);
-
     const git = createGit({
       cwd: projectDir,
       env: await gitIdentityEnv(projectDir),
@@ -113,8 +104,6 @@ export default defineCommand({
     const taskTrees = new Map<string, Oid | null>();
 
     for (const [taskId, taskDef] of Object.entries(config.tasks)) {
-      if (!isTaskEnabled(enabledTasks, taskId)) continue;
-
       const store = makeResultStore({ git, taskId, generateProvenance });
 
       const taskProc = $(taskDef.run, { shell: true, reject: false });
@@ -155,11 +144,10 @@ export default defineCommand({
     }
 
     const parent = await readResultsTip(git, refName);
-    const tree = await writeResultsTree(git, parent, taskTrees);
+    const tree = await writeResultsTree(git, taskTrees);
     const commit = await commitResults(git, {
       refName,
       sourceCommit,
-      taskIds: [...taskTrees.keys()],
       tree,
       parent,
     });

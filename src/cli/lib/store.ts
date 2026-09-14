@@ -6,7 +6,8 @@ import type { Git, Oid, TreeEntry } from "./git";
 
 /**
  * The ref under which the results for `refName` are stored. It points to a
- * chain of commits, one per `attach` run, whose tree looks like:
+ * chain of commits, one per `attach` run, each a snapshot of the results of
+ * every configured task for a single source commit. Their tree looks like:
  *
  *     results/<task>/<result>
  *     results/<task>/<result>.provenance.json
@@ -29,10 +30,9 @@ export const resultPath = (taskId: string, resultId: string) =>
 export const provenanceFileName = (resultId: string) =>
   `${resultId}.provenance.json`;
 
-/** Commit message trailers that describe what a results commit attached. */
+/** Commit message trailers that describe what a results commit holds. */
 const refTrailer = "Twice-Ref";
 const commitTrailer = "Twice-Commit";
-const taskTrailer = "Twice-Task";
 
 export const assertValidRefName = async (git: Git, refName: string) => {
   if (!(await git.isValidRef(twiceRef(refName)))) {
@@ -47,53 +47,18 @@ export const readResultsTip = (git: Git, refName: string) =>
 /** Task id → tree holding the task's results, or `null` if it has none. */
 export type TaskTrees = ReadonlyMap<string, Oid | null>;
 
-/** Reads the trees holding the given tasks' results in a results commit. */
-export const readTaskTrees = async (
+/** Writes a results tree holding the given tasks' results. */
+export const writeResultsTree = (
   git: Git,
-  commit: Oid,
-  taskIds: readonly string[],
-): Promise<TaskTrees> =>
-  new Map(
-    await Promise.all(
-      taskIds.map(
-        async (taskId) =>
-          [taskId, await git.revParse(`${commit}:${taskDir(taskId)}`)] as const,
-      ),
-    ),
-  );
-
-/**
- * Writes a results tree: the tree of the results commit `base` (or an empty
- * one, if `base` is `null`) with the results of the tasks in `taskTrees`
- * replaced. Everything else in the base tree is kept as is.
- */
-export const writeResultsTree = async (
-  git: Git,
-  base: Oid | null,
   taskTrees: TaskTrees,
-): Promise<Oid> => {
-  const rootEntries = base === null ? [] : await git.lsTree(`${base}^{tree}`);
-  const results = rootEntries.find((entry) => entry.path === resultsDir);
-  const taskEntries =
-    results?.type === "tree" ? await git.lsTree(results.oid) : [];
-
-  return git.writeTree([
-    ...rootEntries.filter((entry) => entry !== results),
-    ...taskEntries
-      .filter((entry) => !taskTrees.has(entry.path))
-      .map((entry): TreeEntry => ({
-        mode: entry.mode,
-        type: entry.type,
-        oid: entry.oid,
-        path: taskDir(entry.path),
-      })),
-    ...[...taskTrees].flatMap(([taskId, oid]): TreeEntry[] =>
+): Promise<Oid> =>
+  git.writeTree(
+    [...taskTrees].flatMap(([taskId, oid]): TreeEntry[] =>
       oid === null
         ? []
         : [{ mode: "040000", type: "tree", oid, path: taskDir(taskId) }],
     ),
-  ]);
-};
+  );
 
 /** Commits a results tree on top of `parent` and points the ref at it. */
 export const commitResults = async (
@@ -101,15 +66,12 @@ export const commitResults = async (
   {
     refName,
     sourceCommit,
-    taskIds,
     tree,
     parent,
   }: {
     refName: string;
     /** The commit the results were produced from. */
     sourceCommit: Oid;
-    /** The tasks whose results this commit attaches. */
-    taskIds: readonly string[];
     tree: Oid;
     /** The current results commit of the ref, or `null` if there is none. */
     parent: Oid | null;
@@ -121,7 +83,6 @@ export const commitResults = async (
       "",
       `${refTrailer}: ${refName}`,
       `${commitTrailer}: ${sourceCommit}`,
-      ...taskIds.map((taskId) => `${taskTrailer}: ${taskId}`),
     ].join("\n") + "\n";
 
   const commit = await git.commitTree({
@@ -134,9 +95,8 @@ export const commitResults = async (
 };
 
 /**
- * Re-creates the results commits `commits` (oldest first) on top of `onto`.
- * Each re-created commit only replaces the results of the tasks its original
- * attached, so the results of other tasks present in `onto` are kept.
+ * Re-creates the results commits `commits` (oldest first) on top of `onto`,
+ * keeping their trees, messages and authors, so that the history is linear.
  */
 export const replayResults = async (
   git: Git,
@@ -146,13 +106,10 @@ export const replayResults = async (
   let base = onto;
 
   for (const commit of commits) {
+    const tree = await git.revParse(`${commit}^{tree}`);
+    if (tree === null) throw new Error(`${commit} is not a commit`);
+
     const { author, message: commitMessage } = await git.readCommit(commit);
-    const taskIds = await attachedTasks(git, commit, commitMessage);
-    const tree = await writeResultsTree(
-      git,
-      base,
-      await readTaskTrees(git, commit, taskIds),
-    );
     base = await git.commitTree({
       tree,
       parents: [base],
@@ -162,21 +119,4 @@ export const replayResults = async (
   }
 
   return base;
-};
-
-/** The tasks whose results a results commit attached. */
-const attachedTasks = async (git: Git, commit: Oid, commitMessage: string) => {
-  const trailers = await git.trailers(commitMessage);
-
-  if (trailers.some((trailer) => trailer.key === commitTrailer)) {
-    return trailers
-      .filter((trailer) => trailer.key === taskTrailer)
-      .map((trailer) => trailer.value);
-  }
-
-  // Not created by `attach`: consider every task in its tree attached.
-  const results = await git.revParse(`${commit}:${resultsDir}`);
-  return results === null
-    ? []
-    : (await git.lsTree(results)).map((entry) => entry.path);
 };

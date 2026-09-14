@@ -30,24 +30,7 @@ export interface CommitAuthor {
   date: string;
 }
 
-export interface Trailer {
-  key: string;
-  value: string;
-}
-
 const treeMode = "040000";
-
-const parseTreeEntry = (line: string): TreeEntry => {
-  const match = /^(\d+) (blob|tree|commit) ([0-9a-f]+)\t(.+)$/s.exec(line);
-  if (!match) throw new Error(`Unexpected git ls-tree output: ${line}`);
-  const [, mode, type, oid, entryPath] = match;
-  return {
-    mode: mode!,
-    type: type as TreeEntryType,
-    oid: oid!,
-    path: entryPath!,
-  };
-};
 
 /** The directory an entry path lives in; `""` for the root. */
 const parentDir = (entryPath: string) => {
@@ -124,19 +107,6 @@ export const createGit = ({
 
   const emptyTree = async (): Promise<Oid> =>
     (await $({ input: "" })`git hash-object -t tree -w --stdin`).stdout.trim();
-
-  /** Lists the entries of a tree. Paths are relative to that tree. */
-  const lsTree = async (
-    treeish: string,
-    { recursive = false } = {},
-  ): Promise<TreeEntry[]> => {
-    const { stdout } =
-      await $`git ls-tree -z --full-tree ${recursive ? ["-r"] : []} ${treeish}`;
-    return stdout
-      .split("\0")
-      .filter((line) => line !== "")
-      .map(parseTreeEntry);
-  };
 
   /** Writes one tree per list of direct (non-nested) entries. */
   const mkTrees = async (
@@ -256,21 +226,6 @@ export const createGit = ({
     };
   };
 
-  /** The trailers of a commit message. */
-  const trailers = async (commitMessage: string): Promise<Trailer[]> => {
-    const { stdout } = await $({
-      input: commitMessage,
-    })`git interpret-trailers --parse`;
-
-    return lines(stdout).flatMap((line) => {
-      const separator = line.indexOf(": ");
-      if (separator === -1) return [];
-      return [
-        { key: line.slice(0, separator), value: line.slice(separator + 2) },
-      ];
-    });
-  };
-
   /**
    * Points `ref` at `newOid`, verifying that it currently points at `oldOid`
    * (or that it doesn't exist, if `oldOid` is `null`).
@@ -333,11 +288,9 @@ export const createGit = ({
     isValidRef,
     hashObject,
     hashObjectPaths,
-    lsTree,
     writeTree,
     commitTree,
     readCommit,
-    trailers,
     updateRef,
     isAncestor,
     revList,
