@@ -100,17 +100,6 @@ const printMessage = (msg) => {
 //#endregion
 //#region src/cli/lib/git.ts
 const treeMode = "040000";
-const parseTreeEntry = (line) => {
-	const match = /^(\d+) (blob|tree|commit) ([0-9a-f]+)\t(.+)$/s.exec(line);
-	if (!match) throw new Error(`Unexpected git ls-tree output: ${line}`);
-	const [, mode, type, oid, entryPath] = match;
-	return {
-		mode,
-		type,
-		oid,
-		path: entryPath
-	};
-};
 /** The directory an entry path lives in; `""` for the root. */
 const parentDir = (entryPath) => {
 	const dir = path$2.posix.dirname(entryPath);
@@ -153,11 +142,6 @@ const createGit = ({ cwd, env = {} }) => {
 		return oids;
 	};
 	const emptyTree = async () => (await $({ input: "" })`git hash-object -t tree -w --stdin`).stdout.trim();
-	/** Lists the entries of a tree. Paths are relative to that tree. */
-	const lsTree = async (treeish, { recursive = false } = {}) => {
-		const { stdout } = await $`git ls-tree -z --full-tree ${recursive ? ["-r"] : []} ${treeish}`;
-		return stdout.split("\0").filter((line) => line !== "").map(parseTreeEntry);
-	};
 	/** Writes one tree per list of direct (non-nested) entries. */
 	const mkTrees = async (trees) => {
 		if (trees.length === 0) return [];
@@ -237,18 +221,6 @@ const createGit = ({ cwd, env = {} }) => {
 			message: stdout.slice(separator + 2)
 		};
 	};
-	/** The trailers of a commit message. */
-	const trailers = async (commitMessage) => {
-		const { stdout } = await $({ input: commitMessage })`git interpret-trailers --parse`;
-		return lines(stdout).flatMap((line) => {
-			const separator = line.indexOf(": ");
-			if (separator === -1) return [];
-			return [{
-				key: line.slice(0, separator),
-				value: line.slice(separator + 2)
-			}];
-		});
-	};
 	/**
 	* Points `ref` at `newOid`, verifying that it currently points at `oldOid`
 	* (or that it doesn't exist, if `oldOid` is `null`).
@@ -294,11 +266,9 @@ const createGit = ({ cwd, env = {} }) => {
 		isValidRef,
 		hashObject,
 		hashObjectPaths,
-		lsTree,
 		writeTree,
 		commitTree,
 		readCommit,
-		trailers,
 		updateRef,
 		isAncestor,
 		revList,
@@ -402,7 +372,8 @@ const detectRef = async (git) => {
 //#region src/cli/lib/store.ts
 /**
 * The ref under which the results for `refName` are stored. It points to a
-* chain of commits, one per `attach` run, whose tree looks like:
+* chain of commits, one per `attach` run, each a snapshot of the results of
+* every configured task for a single source commit. Their tree looks like:
 *
 *     results/<task>/<result>
 *     results/<task>/<result>.provenance.json
@@ -418,50 +389,28 @@ const taskDir = (taskId) => `${resultsDir}/${taskId}`;
 const resultPath = (taskId, resultId) => `${taskDir(taskId)}/${resultId}`;
 /** The name of a result's provenance file, which sits next to the result. */
 const provenanceFileName = (resultId) => `${resultId}.provenance.json`;
-/** Commit message trailers that describe what a results commit attached. */
+/** Commit message trailers that describe what a results commit holds. */
 const refTrailer = "Twice-Ref";
 const commitTrailer = "Twice-Commit";
-const taskTrailer = "Twice-Task";
 const assertValidRefName = async (git, refName) => {
 	if (!await git.isValidRef(twiceRef(refName))) throw new CliError(message`${refName} is not a valid ref name.`);
 };
 /** The commit holding the results stored for `refName`, or `null`. */
 const readResultsTip = (git, refName) => git.revParse(`${twiceRef(refName)}^{commit}`);
-/** Reads the trees holding the given tasks' results in a results commit. */
-const readTaskTrees = async (git, commit, taskIds) => new Map(await Promise.all(taskIds.map(async (taskId) => [taskId, await git.revParse(`${commit}:${taskDir(taskId)}`)])));
-/**
-* Writes a results tree: the tree of the results commit `base` (or an empty
-* one, if `base` is `null`) with the results of the tasks in `taskTrees`
-* replaced. Everything else in the base tree is kept as is.
-*/
-const writeResultsTree = async (git, base, taskTrees) => {
-	const rootEntries = base === null ? [] : await git.lsTree(`${base}^{tree}`);
-	const results = rootEntries.find((entry) => entry.path === resultsDir);
-	const taskEntries = results?.type === "tree" ? await git.lsTree(results.oid) : [];
-	return git.writeTree([
-		...rootEntries.filter((entry) => entry !== results),
-		...taskEntries.filter((entry) => !taskTrees.has(entry.path)).map((entry) => ({
-			mode: entry.mode,
-			type: entry.type,
-			oid: entry.oid,
-			path: taskDir(entry.path)
-		})),
-		...[...taskTrees].flatMap(([taskId, oid]) => oid === null ? [] : [{
-			mode: "040000",
-			type: "tree",
-			oid,
-			path: taskDir(taskId)
-		}])
-	]);
-};
+/** Writes a results tree holding the given tasks' results. */
+const writeResultsTree = (git, taskTrees) => git.writeTree([...taskTrees].flatMap(([taskId, oid]) => oid === null ? [] : [{
+	mode: "040000",
+	type: "tree",
+	oid,
+	path: taskDir(taskId)
+}]));
 /** Commits a results tree on top of `parent` and points the ref at it. */
-const commitResults = async (git, { refName, sourceCommit, taskIds, tree, parent }) => {
+const commitResults = async (git, { refName, sourceCommit, tree, parent }) => {
 	const commitMessage = [
 		`Results for ${refName} at ${sourceCommit.slice(0, 7)}`,
 		"",
 		`${refTrailer}: ${refName}`,
-		`${commitTrailer}: ${sourceCommit}`,
-		...taskIds.map((taskId) => `${taskTrailer}: ${taskId}`)
+		`${commitTrailer}: ${sourceCommit}`
 	].join("\n") + "\n";
 	const commit = await git.commitTree({
 		tree,
@@ -472,16 +421,15 @@ const commitResults = async (git, { refName, sourceCommit, taskIds, tree, parent
 	return commit;
 };
 /**
-* Re-creates the results commits `commits` (oldest first) on top of `onto`.
-* Each re-created commit only replaces the results of the tasks its original
-* attached, so the results of other tasks present in `onto` are kept.
+* Re-creates the results commits `commits` (oldest first) on top of `onto`,
+* keeping their trees, messages and authors, so that the history is linear.
 */
 const replayResults = async (git, onto, commits) => {
 	let base = onto;
 	for (const commit of commits) {
+		const tree = await git.revParse(`${commit}^{tree}`);
+		if (tree === null) throw new Error(`${commit} is not a commit`);
 		const { author, message: commitMessage } = await git.readCommit(commit);
-		const taskIds = await attachedTasks(git, commit, commitMessage);
-		const tree = await writeResultsTree(git, base, await readTaskTrees(git, commit, taskIds));
 		base = await git.commitTree({
 			tree,
 			parents: [base],
@@ -491,31 +439,17 @@ const replayResults = async (git, onto, commits) => {
 	}
 	return base;
 };
-/** The tasks whose results a results commit attached. */
-const attachedTasks = async (git, commit, commitMessage) => {
-	const trailers = await git.trailers(commitMessage);
-	if (trailers.some((trailer) => trailer.key === commitTrailer)) return trailers.filter((trailer) => trailer.key === taskTrailer).map((trailer) => trailer.value);
-	const results = await git.revParse(`${commit}:${resultsDir}`);
-	return results === null ? [] : (await git.lsTree(results)).map((entry) => entry.path);
-};
-const enabledTasksOption = map(multiple(option(...["-t", "--task"], string({ metavar: "TASK_NAME" }), { description: message$1`Select only the specified task(s). (can be specified multiple times)` })), (tasks) => tasks.length > 0 ? new Set(tasks) : null);
-const assertTasksDefined = (config, enabledTasks) => {
-	if (!enabledTasks) return;
-	for (const taskId of enabledTasks) if (!(taskId in config.tasks)) throw new CliError(message$1`Task ${taskId} is not defined`);
-};
-const isTaskEnabled = (enabledTasks, taskId) => !enabledTasks || enabledTasks.has(taskId);
 //#endregion
 //#region src/cli/commands/attach.ts
 const ignoreDirtyOptionNames = ["--ignore-dirty"];
 var attach_default = defineCommand({
 	parser: merge(globalOptions, object({
 		ignoreDirty: withDefault(option(...ignoreDirtyOptionNames, { description: message$1`Run even if the working directory is dirty.` }), false),
-		enabledTasks: enabledTasksOption,
 		provenance: provenanceOption,
 		ref: refOption
 	})),
 	metadata: { description: message$1`Run the configured tasks and store their results for the current ref.` },
-	handler: async ({ projectDir, configFilePath, ignoreDirty, enabledTasks, provenance: provenanceArg, ref: refArg }) => {
+	handler: async ({ projectDir, configFilePath, ignoreDirty, provenance: provenanceArg, ref: refArg }) => {
 		const $ = execa({
 			cwd: projectDir,
 			stdout: "pipe",
@@ -525,7 +459,6 @@ var attach_default = defineCommand({
 			if (await $`git diff --quiet`.then(() => false, () => true)) throw new CliError(message$1`Working directory ${projectDir} is dirty. Use ${optionNames$1(ignoreDirtyOptionNames)} to override.`);
 		}
 		const config = await loadConfig(projectDir, configFilePath);
-		assertTasksDefined(config, enabledTasks);
 		const git = createGit({
 			cwd: projectDir,
 			env: await gitIdentityEnv(projectDir)
@@ -537,7 +470,6 @@ var attach_default = defineCommand({
 		const generateProvenance = await discoverProvenanceProvider(provenanceArg);
 		const taskTrees = /* @__PURE__ */ new Map();
 		for (const [taskId, taskDef] of Object.entries(config.tasks)) {
-			if (!isTaskEnabled(enabledTasks, taskId)) continue;
 			const store = makeResultStore({
 				git,
 				taskId,
@@ -558,11 +490,10 @@ var attach_default = defineCommand({
 			taskTrees.set(taskId, await store.writeTree());
 		}
 		const parent = await readResultsTip(git, refName);
-		const tree = await writeResultsTree(git, parent, taskTrees);
+		const tree = await writeResultsTree(git, taskTrees);
 		const commit = await commitResults(git, {
 			refName,
 			sourceCommit,
-			taskIds: [...taskTrees.keys()],
 			tree,
 			parent
 		});
