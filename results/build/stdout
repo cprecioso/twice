@@ -9,7 +9,7 @@
 ℹ Granting execute permission to dist/bin.mjs
 ℹ dist/bin.mjs                  26.49 kB │ gzip:  8.50 kB
 ℹ dist/config.mjs                0.08 kB │ gzip:  0.08 kB
-ℹ dist/bin.mjs.map              52.31 kB │ gzip: 15.02 kB
+ℹ dist/bin.mjs.map              52.23 kB │ gzip: 14.99 kB
 ℹ dist/config-BT1VsNa7.mjs.map   4.54 kB │ gzip:  1.79 kB
 ℹ dist/config-BT1VsNa7.mjs       2.22 kB │ gzip:  1.12 kB
 ℹ dist/github-BSfdJ3Rf.mjs.map   2.01 kB │ gzip:  0.92 kB
@@ -19,7 +19,7 @@
 ℹ dist/config.d.mts.map          0.37 kB │ gzip:  0.23 kB
 ℹ dist/config.d.mts              1.50 kB │ gzip:  0.57 kB
 ℹ dist/bin.d.mts                 0.01 kB │ gzip:  0.03 kB
-ℹ 12 files, total: 92.14 kB
-✔ Build complete in 400ms
-✔ [attw] No problems found (193ms)
-✔ [publint] No issues found (207ms)
+ℹ 12 files, total: 92.06 kB
+✔ Build complete in 392ms
+✔ [attw] No problems found (183ms)
+✔ [publint] No issues found (195ms)
