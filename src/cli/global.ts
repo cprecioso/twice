@@ -1,5 +1,4 @@
 import {
-  constant,
   dependency,
   message,
   object,
@@ -31,5 +30,4 @@ export const globalOptions = object({
       description: message`The path to the configuration file.`,
     }),
   ),
-  ref: constant("HEAD"),
 });

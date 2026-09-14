@@ -15,20 +15,34 @@ export const globSchema = z.compile(
 export type GlobInput = z.input<typeof globSchema>;
 export type Glob = z.infer<typeof globSchema>;
 
+/**
+ * Task ids name the directory their results are stored in, so they must be a
+ * single, well-formed path component.
+ */
+const taskIdSchema = z
+  .string()
+  .refine(
+    (taskId) =>
+      taskId !== "." &&
+      taskId !== ".." &&
+      !/[/\0\n]/.test(taskId) &&
+      taskId.trim() === taskId &&
+      taskId !== "",
+    {
+      error:
+        "Task ids cannot be empty, be '.' or '..', contain slashes, NUL characters or line breaks, or start or end with whitespace",
+    },
+  );
+
 export const configSchema = z.compile(
   z.object({
     tasks: z.record(
-      z.string(),
+      taskIdSchema,
       z.object({
         run: runnableSchema,
         store: z
           .object({
-            files: z
-              .object({
-                glob: globSchema,
-                compress: z.boolean().default(true),
-              })
-              .optional(),
+            files: z.object({ glob: globSchema }).optional(),
           })
           .and(
             z.record(

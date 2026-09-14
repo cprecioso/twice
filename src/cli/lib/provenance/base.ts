@@ -15,9 +15,10 @@ export const enableSchema = z.function({
   output: z.boolean(),
 });
 
+/** Generates the provenance of one or more subjects, as a single document. */
 export type GenerateProvenance = z.infer<typeof generateProvenanceSchema>;
 export const generateProvenanceSchema = z.function({
-  input: z.tuple([subjectSchema]),
+  input: z.tuple([z.array(subjectSchema).min(1)]),
   output: z.promise(z.instanceof(Uint8Array)),
 });
 

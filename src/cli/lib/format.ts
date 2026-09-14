@@ -7,3 +7,8 @@ const messageOptions = {
 
 export const formatMessage = (msg: optique.Message) =>
   optique.formatMessage(msg, messageOptions);
+
+/** Prints an informational message to stderr. */
+export const printMessage = (msg: optique.Message) => {
+  console.error(formatMessage(msg));
+};
